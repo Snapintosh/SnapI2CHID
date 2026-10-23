@@ -1,1 +1,10 @@
+.DS_Store
+._*
+*.orig
+*.rej
+*.dSYM/
 out/
+build/
+# Reconstructed private Apple class headers are generated locally from your KDK and never committed.
+*26A428.h
+*.kext/
