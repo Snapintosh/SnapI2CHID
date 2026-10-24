@@ -222,6 +222,9 @@ void SnapI2CHIDBus::step()
     noteWake(startUs);
 #endif
     wake = i2c_hid_step(fDev);
+#if SNAP_I2C_HID_FNKEYS
+    noteRejectedInput();
+#endif
     noteState();
     noteProgress();
     notePtpReinit();
@@ -298,6 +301,22 @@ void SnapI2CHIDBus::armNextStep(uint32_t wake, uint64_t startUs, uint32_t report
     delay = delay > lead ? delay - lead : 1;
     fArmedForUs = now + delay;
     fTimer->setTimeoutUS((uint32_t)delay);
+}
+#endif
+
+#if SNAP_I2C_HID_FNKEYS
+/* The keyboard's Fn-key raw log also names inputs the transport refused, which never reach handleReport: the bytes
+ * of the last one (fDev->rejected) whenever the refusal counters moved in this step. Only a bus with a keyboard
+ * service can log (the touchpad's has none), and the keyboard only with its raw log on. */
+void SnapI2CHIDBus::noteRejectedInput()
+{
+    const struct i2c_hid_stats *s = &fDev->stats;
+    const uint32_t rejected = s->bad_length + s->unknown_id + s->wrong_size;
+    if (rejected == fRejectedSeen)
+        return;
+    fRejectedSeen = rejected;
+    if (fKeyboard)
+        fKeyboard->noteRejected(fDev->rejected, fDev->rejected_len);
 }
 #endif
 
