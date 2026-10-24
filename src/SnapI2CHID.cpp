@@ -70,6 +70,17 @@ extern "C" {
 #define SNAP_I2C_HID_MIN_POLL_US 2000u          /* T1: the floor of the active period */
 #endif
 
+/* -DSNAP_I2C_HID_FNKEYS=1, in this unit and hid-keyboard.o both: the keyboard's Fn-key layer (hid-keyboard.h), which
+ * turns report 90's ASUS hotkeys into macOS's usages and can log what the F-row sends. Even built in it stays off
+ * unless the boot-arg snap_i2c_fnkeys sets HID_FNKEYS_* bits. Off by default; without it this file compiles as
+ * before. */
+#ifndef SNAP_I2C_HID_FNKEYS
+#define SNAP_I2C_HID_FNKEYS 0
+#endif
+#if SNAP_I2C_HID_FNKEYS && !SNAP_I2C_HID_LATENCY
+#include <pexpert/pexpert.h>
+#endif
+
 /* The engine's scroll options are IOHIDEventService's dispatch options (26A428 header values). */
 static_assert(HID_PTP_SCROLL_PHASE_BEGAN == kHIDDispatchOptionPhaseBegan &&
               HID_PTP_SCROLL_PHASE_CHANGED == kHIDDispatchOptionPhaseChanged &&
@@ -151,6 +162,9 @@ private:
     void noteWake(uint64_t startUs);
     void armNextStep(uint32_t wake, uint64_t startUs, uint32_t reports);
 #endif
+#if SNAP_I2C_HID_FNKEYS
+    void noteRejectedInput();
+#endif
     void noteState();
     void noteProgress();
     void noteServices();
@@ -220,6 +234,9 @@ private:
     uint32_t fActiveUs = SNAP_I2C_HID_ACTIVE_POLL_US;
     uint64_t fDeadlineUs = 0, fArmedForUs = 0, fSlopUs = 0, fLastReportUs = 0;
     uint32_t fActivePolls = 0, fIdlePolls = 0;
+#endif
+#if SNAP_I2C_HID_FNKEYS
+    uint32_t fRejectedSeen = 0;         /* bad_length + unknown_id + wrong_size at the last step */
 #endif
 };
 
@@ -317,7 +334,9 @@ private:
  * becomes keyboard-page transitions and report 55 consumer-page ones (src/hid-keyboard.c),
  * dispatched with dispatchKeyboardEvent; the Caps Lock LED comes back as output report 54.
  * It is attached to the bus and started by it, not matched, so no deferred personality or
- * DriverKit server is involved. Key usages are never logged; only counts. */
+ * DriverKit server is involved. Key usages are never logged; only counts. The one exception is
+ * the opt-in Fn-key raw log (SNAP_I2C_HID_FNKEYS, snap_i2c_fnkeys bit 0x2), which names hotkey
+ * codes, Consumer usages and F-row/navigation keys, never a key that types a character. */
 class SnapI2CHIDKeyboard : public IOHIDEventService {
     OSDeclareDefaultStructors(SnapI2CHIDKeyboard)
 
@@ -330,6 +349,10 @@ public:
     void suppress(const char *why);                            /* bus work loop */
     void resume();                                             /* bus work loop */
     const char *state() const { return fSuppressed ? "yielded" : "dispatching"; }
+#if SNAP_I2C_HID_FNKEYS
+    void noteRejected(const uint8_t *input, uint32_t len);     /* bus work loop */
+    bool rawLog() const { return (fFn.flags & HID_FNKEYS_RAW_LOG) != 0; }
+#endif
 
 protected:
     bool handleStart(IOService *provider) override;
@@ -348,6 +371,11 @@ protected:
 
 private:
     static void emit(void *ctx, uint32_t page, uint32_t usage, uint32_t down);
+#if SNAP_I2C_HID_FNKEYS
+    void startFnKeys();
+    bool mayLog();
+    static void note(void *ctx, const struct hid_fnkeys_note *n);
+#endif
 
     SnapI2CHIDBus *fBus = nullptr;
     OSString *fProductName = nullptr;
@@ -356,6 +384,10 @@ private:
     uint32_t fReports = 0, fTransitions = 0, fNextLog = 1, fLeds = 0, fLedRequests = 0;
     uint32_t fYieldedReports = 0, fNextYieldLog = 1;
     bool fSuppressed = false;
+#if SNAP_I2C_HID_FNKEYS
+    struct hid_fnkeys fFn;              /* flags 0: the layer is off and fState works as without it */
+    struct hid_fnkeys_rate fRate;
+#endif
 };
 
 /* The touchpad as an IOHIDEventService. In its default mouse mode the mouse collection's input
